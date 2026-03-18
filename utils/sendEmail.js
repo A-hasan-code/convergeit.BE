@@ -11,13 +11,50 @@ const parseEmails = (value) => {
 };
 
 const sendViaSendGridApi = async ({ apiKey, from, to, cc, bcc, subject, html }) => {
+  // SendGrid requires that each email address is unique across to/cc/bcc within a personalization.
+  const normalizeList = (arr) => (arr || []).map((v) => String(v).trim()).filter(Boolean);
+
+  const uniqueAcrossToCcBcc = ({ to, cc, bcc }) => {
+    const toList = [];
+    const toSet = new Set();
+
+    for (const email of normalizeList(to)) {
+      const key = email.toLowerCase();
+      if (toSet.has(key)) continue;
+      toSet.add(key);
+      toList.push(email);
+    }
+
+    const ccList = [];
+    const ccSet = new Set();
+    for (const email of normalizeList(cc)) {
+      const key = email.toLowerCase();
+      if (toSet.has(key) || ccSet.has(key)) continue;
+      ccSet.add(key);
+      ccList.push(email);
+    }
+
+    const bccList = [];
+    const bccSet = new Set();
+    for (const email of normalizeList(bcc)) {
+      const key = email.toLowerCase();
+      if (toSet.has(key) || ccSet.has(key) || bccSet.has(key)) continue;
+      bccSet.add(key);
+      bccList.push(email);
+    }
+
+    return { to: toList, cc: ccList, bcc: bccList };
+  };
+
+  const recipients = uniqueAcrossToCcBcc({ to, cc, bcc });
+
   const payload = {
     personalizations: [
       {
-        to: to.map((email) => ({ email })),
+        to: recipients.to.map((email) => ({ email })),
         subject,
-        ...(cc.length ? { cc: cc.map((email) => ({ email })) } : {}),
-        ...(bcc.length ? { bcc: bcc.map((email) => ({ email })) } : {}),
+        ...(recipients.cc.length ? { cc: recipients.cc.map((email) => ({ email })) } : {}),
+        ...(recipients.bcc.length ? { bcc: recipients.bcc.map((email) => ({ email })) } : {}),
       },
     ],
     from: { email: from },
