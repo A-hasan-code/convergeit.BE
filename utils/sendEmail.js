@@ -1,13 +1,80 @@
 const nodemailer = require('nodemailer');
+const https = require('https');
 
+const parseEmails = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
+  return String(value)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+};
+
+const sendViaSendGridApi = async ({ apiKey, from, to, cc, bcc, subject, html }) => {
+  const payload = {
+    personalizations: [
+      {
+        to: to.map((email) => ({ email })),
+        subject,
+        ...(cc.length ? { cc: cc.map((email) => ({ email })) } : {}),
+        ...(bcc.length ? { bcc: bcc.map((email) => ({ email })) } : {}),
+      },
+    ],
+    from: { email: from },
+    content: [
+      {
+        type: 'text/html',
+        value: html,
+      },
+    ],
+  };
+
+  const body = JSON.stringify(payload);
+
+  const options = {
+    hostname: 'api.sendgrid.com',
+    path: '/v3/mail/send',
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    },
+  };
+
+  await new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          resolve();
+          return;
+        }
+        reject(new Error(`SendGrid API failed: ${res.statusCode} ${data}`));
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+};
 
 const sendMail = async (smtpConfig, mailOptions) => {
   // Avoid logging secrets (authPass). These logs help debug SMTP connectivity/timeouts.
+  const port = smtpConfig?.port;
+  const effectiveSecure =
+      port === 465 ? true : port === 587 ? false : smtpConfig?.secure;
+  const requireTLS = port === 587;
+
   console.log('[sendMail] using SMTP config:', {
     configName: smtpConfig?.configName,
     host: smtpConfig?.host,
-    port: smtpConfig?.port,
-    secure: smtpConfig?.secure,
+    port: port,
+    secure: effectiveSecure,
+    requireTLS,
     authUser: smtpConfig?.authUser,
   });
 
@@ -22,12 +89,17 @@ const sendMail = async (smtpConfig, mailOptions) => {
 
   const transporter = nodemailer.createTransport({
     host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure, // true for 465, false for other ports
+    port: port,
+    secure: effectiveSecure,
+    requireTLS,
     auth: {
       user: smtpConfig.authUser, // SMTP username
       pass: smtpConfig.authPass  // SMTP password
-    }
+    },
+    // Avoid long/hanging SMTP connections from failing the request.
+    connectionTimeout: 30000, // ms
+    greetingTimeout: 30000, // ms
+    socketTimeout: 30000, // ms
   });
 
   
@@ -311,6 +383,37 @@ const sendMail = async (smtpConfig, mailOptions) => {
       command: err?.command,
       name: err?.name,
     });
+
+    const isSendGridSmtp =
+      smtpConfig?.host?.includes('sendgrid.net') && smtpConfig?.authUser === 'apikey';
+
+    // If SMTP is blocked/timed out in the hosting environment, fallback to SendGrid HTTPS API.
+    if (isSendGridSmtp && (err?.code === 'ETIMEDOUT' || err?.command === 'CONN')) {
+      try {
+        const to = parseEmails(finalMailOptions.to);
+        const cc = parseEmails(finalMailOptions.cc);
+        const bcc = parseEmails(finalMailOptions.bcc);
+
+        await sendViaSendGridApi({
+          apiKey: smtpConfig?.authPass, // For SendGrid SMTP, authPass is typically the API key.
+          from: finalMailOptions.from,
+          to,
+          cc,
+          bcc,
+          subject: finalMailOptions.subject,
+          html: finalMailOptions.html,
+        });
+
+        console.log('[sendMail] SendGrid API fallback success:', { chatId: mailOptions?.chatId });
+        return;
+      } catch (fallbackErr) {
+        console.error('[sendMail] SendGrid API fallback failed:', {
+          chatId: mailOptions?.chatId,
+          message: fallbackErr?.message,
+        });
+      }
+    }
+
     throw err;
   }
 };

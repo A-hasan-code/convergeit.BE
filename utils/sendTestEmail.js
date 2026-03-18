@@ -1,14 +1,24 @@
 const nodemailer = require('nodemailer');
 
 const sendTestEmail = async (smtpConfig, from, to, cc, bcc) => {
+    const port = smtpConfig?.port;
+    // Auto-fix common misconfiguration: 587 uses STARTTLS (secure=false), 465 uses SMTPS (secure=true).
+    const effectiveSecure =
+        port === 465 ? true : port === 587 ? false : smtpConfig?.secure;
+    const requireTLS = port === 587;
+
     const transporter = nodemailer.createTransport({
         host: smtpConfig.host,
-        port: smtpConfig.port,
-        secure: smtpConfig.secure, // true for 465, false for other ports
+        port: port,
+        secure: effectiveSecure,
+        requireTLS,
         auth: {
             user: smtpConfig.authUser, // SMTP username
             pass: smtpConfig.authPass  // SMTP password
-        }
+        },
+        connectionTimeout: 30000, // ms
+        greetingTimeout: 30000, // ms
+        socketTimeout: 30000, // ms
     });
 
     const htmlTemplate = `

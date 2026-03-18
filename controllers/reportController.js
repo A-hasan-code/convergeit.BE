@@ -39,14 +39,22 @@ const cancelCronJob = (reportId) => {
 };
 
 const sendMail = async (smtpConfig, mailOptions) => {
+    const port = smtpConfig?.port;
+    const effectiveSecure =
+        port === 465 ? true : port === 587 ? false : smtpConfig?.secure;
+    const requireTLS = port === 587;
     const transporter = nodemailer.createTransport({
         host: smtpConfig.host,
-        port: smtpConfig.port,
-        secure: smtpConfig.secure,
+        port: port,
+        secure: effectiveSecure,
+        requireTLS,
         auth: {
             user: smtpConfig.authUser,
             pass: smtpConfig.authPass
-        }
+        },
+        connectionTimeout: 30000, // ms
+        greetingTimeout: 30000, // ms
+        socketTimeout: 30000, // ms
     });
 
     await transporter.sendMail(mailOptions);

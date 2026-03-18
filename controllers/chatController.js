@@ -187,7 +187,17 @@ return `<tr><td style="padding: 10px 0; border-bottom: 1px solid #fff; padding-r
                 chatInitiatedPage,
             };
 
-            await sendMail(smtpConfig, mailOptions);
+            // Don't block chat creation on SMTP delays/timeouts.
+            try {
+                await sendMail(smtpConfig, mailOptions);
+            } catch (mailErr) {
+                console.error('[chatController] sendMail failed (continuing):', {
+                    chatId: chat?._id,
+                    code: mailErr?.code,
+                    message: mailErr?.message,
+                    command: mailErr?.command,
+                });
+            }
         } else {
             console.log('SMTP configuration not found for website.');
         }
