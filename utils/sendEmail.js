@@ -2,6 +2,24 @@ const nodemailer = require('nodemailer');
 
 
 const sendMail = async (smtpConfig, mailOptions) => {
+  // Avoid logging secrets (authPass). These logs help debug SMTP connectivity/timeouts.
+  console.log('[sendMail] using SMTP config:', {
+    configName: smtpConfig?.configName,
+    host: smtpConfig?.host,
+    port: smtpConfig?.port,
+    secure: smtpConfig?.secure,
+    authUser: smtpConfig?.authUser,
+  });
+
+  console.log('[sendMail] mail options:', {
+    from: mailOptions?.from,
+    to: mailOptions?.to,
+    cc: mailOptions?.cc,
+    bcc: mailOptions?.bcc,
+    subject: mailOptions?.subject,
+    chatId: mailOptions?.chatId,
+  });
+
   const transporter = nodemailer.createTransport({
     host: smtpConfig.host,
     port: smtpConfig.port,
@@ -280,7 +298,21 @@ const sendMail = async (smtpConfig, mailOptions) => {
   };
 
 
-  await transporter.sendMail(finalMailOptions);
+  try {
+    await transporter.sendMail(finalMailOptions);
+    console.log('[sendMail] sendMail success:', { chatId: mailOptions?.chatId });
+  } catch (err) {
+    // Provide error fields that are usually present on SMTP timeouts.
+    console.error('[sendMail] sendMail failed:', {
+      chatId: mailOptions?.chatId,
+      message: err?.message,
+      code: err?.code,
+      responseCode: err?.responseCode,
+      command: err?.command,
+      name: err?.name,
+    });
+    throw err;
+  }
 };
 
 module.exports = sendMail;
